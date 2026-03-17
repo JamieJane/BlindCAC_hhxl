@@ -1,0 +1,178 @@
+# general settings
+# Started by Cursor 10356102 20250312150000000
+# Finetune: 基于 0305 预训练权重微调；使用前请将 path.pretrain_network_g 改为实际 0305 模型路径
+# Modified for batch_size_per_gpu: 16 (originally 8)
+# Changes: T_max, total_iter, learning rates, eta_min, num_worker_per_gpu, val_freq, save_checkpoint_freq
+name: PSFguided_SwinUnet_AODLibpro_0305_finetune_lpips_v3
+model_type: PSFprediction_guided_CACModel
+scale: 1
+num_gpu: 1
+manual_seed: 42
+
+datasets:
+  train:
+    name: AODLibpro
+    type: PairedImageDataset_psfabd_readcsv
+    # dataroot_gt: /home/strange/strange/dataset/LensLib/source_lib/specific/s1/gt
+    # dataroot_lq: /home/strange/strange/dataset/LensLib/source_lib/specific/s1/train
+    dataroot_gt: /public/share/chengdu/zhangminjian/blindcac/Mixlib_data/MixLib_32401l40i/hybrid/gt
+    dataroot_lq: /public/share/chengdu/zhangminjian/blindcac/Mixlib_data/MixLib_32401l40i/hybrid/ab
+    dataroot_label: /public/share/chengdu/zhangminjian/blindcac/Mixlib_data/MixLib_32401l40i/hybrid/label
+    csv_path: /public/share/chengdu/zhangminjian/blindcac/Mixlib_data/MixLib_32401l40i/hybrid/meta_info.csv
+    # dataroot_abd: /home/strange/strange/dataset/OmniCAC/Lib_Data/demo100lib_abdmap_v2
+    dataroot_abd: /public/share/chengdu/zhangminjian/blindcac/AODLibpro_lens/Train/psf_sfr
+    # dataroot_fov: /home/strange/workspace/strange/dataset/MOS2K/fov_input.pth
+    filename_tmpl: '{}'
+    io_backend:
+      type: disk
+
+    gt_size: 512
+    use_flip: true
+    use_rot: true
+
+    # data loader
+    num_worker_per_gpu: 8  # Modified: 8 -> 16
+    batch_size_per_gpu: 12  # Modified: 8 -> 16
+    dataset_enlarge_ratio: 1
+    prefetch_mode: ~
+
+
+
+  val_0:
+    name: benchmark
+    type: PairedImageDataset
+    dataroot_gt: /public/share/chengdu/zhangminjian/blindcac/MixLib_demotest/hybrid/gt
+    dataroot_lq: /public/share/chengdu/zhangminjian/blindcac/MixLib_demotest/hybrid/ab
+    io_backend:
+      type: disk
+
+
+
+
+# network structures
+network_g:
+  type: SwinUnet_psfprediction_cacstage
+  # type: UniCAC_prompt_multiskip
+  gt_resolution: 512
+  norm_type: 'gn'
+  act_type: 'silu'
+  scale_factor: 1
+  codebook_params:
+    - [32, 1024, 512]
+
+  LQ_stage: true
+  use_weight: false
+  weight_alpha: -1.0
+
+network_d:
+  type: UNetDiscriminatorSN 
+  num_in_ch: 3
+
+# network_d:
+#   type: VGGStyleDiscriminator256
+#   num_in_ch: 3
+#   num_feat: 64
+
+# path：加载 0305 预训练权重进行 finetune
+path:
+  pretrain_network_g: experiments/PSFguided_SwinUnet_AODLibpro_0305/models/net_g_80000.pth
+  # 若使用指定 iter 的 ckpt，可改为例如: net_g_200000.pth
+  strict_load: false
+  # resume_state: ~
+
+# training settings（finetune：较小 lr、较少 iter）
+train:
+  optim_g:
+    type: Adam
+    lr: !!float 5e-5
+    weight_decay: 0
+    betas: [0.9, 0.99]
+  optim_d:
+    type: Adam
+    lr: !!float 1e-4
+    weight_decay: 0
+    betas: [0.9, 0.99]
+
+  scheduler:
+    type: TrueCosineAnnealingLR
+    T_max: 5000
+    eta_min: !!float 1e-6
+
+  total_iter: 10000
+  warmup_iter: 500
+
+  # losses
+  pixel_opt:
+    type: L1Loss
+    loss_weight: 1.0 
+    reduction: mean
+
+  # abd_opt:
+  #   type: L1Loss
+  #   loss_weight: 1.0
+  #   reduction: mean
+
+  perceptual_opt:
+    type: LPIPSLoss
+    loss_weight: !!float 1.0
+
+  # trgtv_opt:
+  #   type: TVLoss
+  #   loss_weight: !!float 0.0000
+    
+  # gan_opt:
+  #   type: GANLoss
+  #   gan_type: lsgan
+  #   real_label_val: 1.0
+  #   fake_label_val: 0.0
+  #   loss_weight: 0.01
+
+  gan_opt:
+    type: GANLoss
+    gan_type: hinge
+    real_label_val: 1.0
+    fake_label_val: 0.0
+    loss_weight: 0.00
+
+  codebook_opt:
+    loss_weight: 0.0
+  
+  # semantic_opt:
+  #   loss_weight: 0.0 
+
+
+  net_d_iters: 1
+  net_d_init_iters: !!float 0 
+
+# validation settings
+val:
+  val_freq: !!float 500
+  save_img: true
+
+  metrics:
+    # score: # metric name, can be arbitrary
+    #   type: calculate_score
+    #   crop_border: 0
+    #   test_y_channel: false
+    psnr: # metric name, can be arbitrary
+      type: calculate_psnr
+      crop_border: 0
+      test_y_channel: false
+    ssim: # metric name, can be arbitrary
+      type: calculate_ssim
+      crop_border: 0
+      test_y_channel: false
+    lpips: # metric name, can be arbitrary
+      type: calculate_lpips
+      crop_border: 0
+      test_y_channel: false
+
+# logging settings
+logger:
+  print_freq: 100
+  save_checkpoint_freq: !!float 1000
+  use_tb_logger: true
+  wandb:
+    project: ~
+    resume_id: ~
+# Ended by Cursor 10356102 20250312150000000
